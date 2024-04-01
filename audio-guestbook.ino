@@ -27,8 +27,8 @@
 #include <SPI.h>
 #include <SD.h>
 #include <TimeLib.h>
-#include <MTP_Teensy.h>
-#include "play_sd_wav.h" // local copy with fixes
+#include "MTP_Teensy.h"
+#include <play_sd_wav.h>
 
 // DEFINES
 // Define pins used by Teensy Audio Shield
@@ -46,7 +46,7 @@
 // Inputs
 AudioSynthWaveform          waveform1; // To create the "beep" sfx
 AudioInputI2S               i2s2; // I2S input from microphone on audio shield
-AudioPlaySdWavX              playWav1; // Play 44.1kHz 16-bit PCM greeting WAV file
+AudioPlaySdWav              playWav1; // Play 44.1kHz 16-bit PCM greeting WAV file
 AudioRecordQueue            queue1; // Creating an audio buffer in memory before saving to SD
 AudioMixer4                 mixer; // Allows merging several inputs to same output
 AudioOutputI2S              i2s1; // I2S interface to Speaker/Line Out on Audio shield
@@ -63,14 +63,15 @@ char filename[15];
 File frec;
 
 // Use long 40ms debounce time on both switches
-Bounce buttonRecord = Bounce(HOOK_PIN, 40);
-Bounce buttonPlay = Bounce(PLAYBACK_BUTTON_PIN, 40);
+Bounce buttonRecord = Bounce(HOOK_PIN, 80);
+Bounce buttonPlay = Bounce(PLAYBACK_BUTTON_PIN, 80);
 
 // Keep track of current state of the device
 enum Mode {Initialising, Ready, Prompting, Recording, Playing};
 Mode mode = Mode::Initialising;
 
 float beep_volume = 0.04f; // not too loud :-)
+unsigned int mic_gain = 22; // experiment, 15b might be OK, 22 is of course louder
 
 uint32_t MTPcheckInterval; // default value of device check interval [ms]
 
@@ -111,7 +112,7 @@ void setup() {
   // Define which input on the audio shield to use (AUDIO_INPUT_LINEIN / AUDIO_INPUT_MIC)
   sgtl5000_1.inputSelect(AUDIO_INPUT_MIC);
   //sgtl5000_1.adcHighPassFilterDisable(); //
-  sgtl5000_1.volume(0.95);
+  sgtl5000_1.volume(0.95f);
 
   mixer.gain(0, 1.0f);
   mixer.gain(1, 1.0f);
@@ -146,8 +147,8 @@ void setup() {
     MTPcheckInterval = MTP.storage()->get_DeltaDeviceCheckTimeMS();
     
     // Value in dB
-//  sgtl5000_1.micGain(15);
-  sgtl5000_1.micGain(5); // much lower gain is required for the AOM5024 electret capsule
+  sgtl5000_1.micGain(mic_gain);
+//  sgtl5000_1.micGain(5); // much lower gain is required for the AOM5024 electret capsule
 
   // Synchronise the Time object used in the program code with the RTC time provider.
   // See https://github.com/PaulStoffregen/Time
@@ -180,6 +181,7 @@ void loop() {
 
     case Mode::Prompting:
       // Wait a second for users to put the handset to their ear
+      Serial.println("wait 1000");
       wait(1000);
       // Play the greeting inviting them to record their message
       playWav1.play("greeting.wav");    
@@ -188,19 +190,19 @@ void loop() {
       while (!playWav1.isStopped()) {
         // Check whether the handset is replaced
         buttonRecord.update();
-        buttonPlay.update();
+        //buttonPlay.update();
         // Handset is replaced
         if(buttonRecord.risingEdge()) {
           playWav1.stop();
           mode = Mode::Ready; print_mode();
           return;
         }
-        if(buttonPlay.fallingEdge()) {
-          playWav1.stop();
-          //playAllRecordings();
-          playLastRecording();
-          return;
-        }
+        //if(buttonPlay.fallingEdge()) {
+        //  playWav1.stop();
+        //  //playAllRecordings();
+        //  playLastRecording();
+        //  return;
+        //}
         
       }
       // Debug message
@@ -344,6 +346,7 @@ void stopRecording() {
 
 
 void playAllRecordings() {
+  Serial.println("Play all recordings");
   // Recording files are saved in the root directory
   File dir = SD.open("/");
   
@@ -394,6 +397,7 @@ void playAllRecordings() {
 }
 
 void playLastRecording() {
+  Serial.println("Play last recording");
   // Find the first available file number
   uint16_t idx = 0; 
   for (uint16_t i=0; i<9999; i++) {
@@ -451,12 +455,14 @@ void wait(unsigned int milliseconds) {
   elapsedMillis msec=0;
 
   while (msec <= milliseconds) {
-    buttonRecord.update();
-    buttonPlay.update();
-    if (buttonRecord.fallingEdge()) Serial.println("Button (pin 0) Press");
-    if (buttonPlay.fallingEdge()) Serial.println("Button (pin 1) Press");
-    if (buttonRecord.risingEdge()) Serial.println("Button (pin 0) Release");
-    if (buttonPlay.risingEdge()) Serial.println("Button (pin 1) Release");
+    if (buttonRecord.update()==1) {
+      if (buttonRecord.fallingEdge()) Serial.printf("Button (pin 0) Press %lu\r\n", (uint32_t)msec);
+      if (buttonRecord.risingEdge()) Serial.printf("Button (pin 0) Release %lu\r\n", (uint32_t)msec);
+    }
+    if (buttonPlay.update()==1) {
+      if (buttonPlay.fallingEdge()) Serial.println("Button (pin 1) Press");
+      if (buttonPlay.risingEdge()) Serial.println("Button (pin 1) Release");
+    }
   }
 }
 
@@ -516,22 +522,22 @@ void writeOutHeader() { // update WAV header with final filesize/datasize
 }
 
 void end_Beep(void) {
-          waveform1.frequency(523.25);
-        waveform1.amplitude(beep_volume);
-        wait(250);
-        waveform1.amplitude(0);
-        wait(250);
-        waveform1.amplitude(beep_volume);
-        wait(250);
-        waveform1.amplitude(0);
-        wait(250);
-        waveform1.amplitude(beep_volume);
-        wait(250);
-        waveform1.amplitude(0);
-        wait(250);
-        waveform1.amplitude(beep_volume);
-        wait(250);
-        waveform1.amplitude(0);
+  waveform1.frequency(523.25f);
+  waveform1.amplitude(beep_volume);
+  wait(250);
+  waveform1.amplitude(0);
+  wait(250);
+  waveform1.amplitude(beep_volume);
+  wait(250);
+  waveform1.amplitude(0);
+  wait(250);
+  waveform1.amplitude(beep_volume);
+  wait(250);
+  waveform1.amplitude(0);
+  wait(250);
+  waveform1.amplitude(beep_volume);
+  wait(250);
+  waveform1.amplitude(0);
 }
 
 void print_mode(void) { // only for debugging
